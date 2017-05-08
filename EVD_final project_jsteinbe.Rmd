@@ -1,0 +1,222 @@
+---
+title: "Final Project"
+author: "Yoni Steinberg"
+date: "February 26, 2017"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+## Preliminary
+
+Important -- please put your name in the "YOUR NAME HERE" section above, so that your project can be identified easily.
+
+## Assignment
+
+The file `project_data.rda` contains the following data frames, which all pertain to global health statistics
+
+  + `pop.by.age`: contains the population for 138 countries, for the years 1950-2050 (using projected populations after 2007), broken up into three age groups (0-19 years, 20-60 years, and 61+ years)
+  + `gdp.lifeExp`: the per capita GDP (a measure of economic wealth) and life expectancy for these countries, for the years 1952-2007
+  + `gdp.lifeExp.small`: a small subset of the years in `gdp.lifeExp`
+  + `continents`: the continent of each country in the previous datasets
+
+This data was made famous by Hans Rosling (1948-2017) and his Gapminder Foundation. You can see one of his videos here: https://www.youtube.com/watch?v=BPt8ElTQMIg
+
+## Part 1
+
+The file `part1.pdf` shows how the age demographics are changing over time for all 138 countries in the data set, where we have used the `Mclust` clustering algorithm to divide the countries up into four groups (note that the clusters differ slightly from the continents):
+
+  + group 1: a group whose age demographics are younger than the other countries, for the entire time span
+  + group 4: a group whose age demographics are older than the other countries, particularly in later years
+  + groups 2 and 3: these groups initially are young and look more like group 1 in 1950, but in later years their demographics shift towards group 4. This might be due to improvements in living quality for these countries. Group 3 shifts further than group 2. 
+
+Your first task is to recreate this plot (or create a similar one), using the data set `pop.by.age` which is in the file `project_data.rda`.
+
+
+
+```{r}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(mclust)
+options(scipen = 999)
+
+# load the dataset
+load('project_data.rda')
+
+#data prep and wrangle
+df1 <- pop.by.age %>%
+  mutate(total.pop = rowSums(.[3:5])) %>%
+  gather(age.cat, pop.agecat, c(3:5)) %>%
+  mutate(perct.age = pop.agecat/total.pop) %>%
+  arrange(country, year, age.cat) 
+```
+
+```{r}
+#data prep for mclust
+df2 <- df1
+df2 <- spread(df1, key = age.cat, value = perct.age)
+#change column names 
+colnames(df2) <- c('country', 'year', 'continent', 'total.pop','pop.agecat','0-19 Years old', '20-60 Years old', '61+ Years old')
+
+df2melt <- reshape2::melt(df2, id.vars = c('country', 'year'), measure.vars = c('0-19 Years old', '20-60 Years old', '61+ Years old'))
+
+df2melt <- df2melt%>%
+  na.omit()
+
+df2melt2 <- mutate(df2melt, year.variable = interaction(year, variable))
+
+df2melt2Sub<- subset(df2melt2, select = c('country', 'year.variable', 'value'))
+#df2melt2SubNew <- df2melt2Sub[1:8694,]
+
+df2.spread <- tidyr::spread(df2melt2Sub, key = year.variable, value = value)
+```
+
+```{r}
+#clusters
+clust <- Mclust(df2.spread[ ,c(2:64)], G = 4)
+df2.spread$cluster = clust$classification
+#extract cluster column
+df3 <- df2.spread[,c('country','cluster')]
+#merge cluster column to original dataframe
+df4 <- merge(df1, df3, "country") 
+df5 <- df4[c('country','year', 'perct.age', "continent", "total.pop", "age.cat", "pop.agecat")] 
+
+#graph
+p <- ggplot(data=df4, mapping=aes(x=year, y=perct.age, group = country, color = continent)) + geom_line(data = df5, color='grey', size=1) + geom_line() + facet_grid(cluster ~ age.cat) + labs(x = 'Year', y = 'Percent', title = 'Population by Age (in percentage) over Time') + theme(plot.title = element_text(hjust = .5))
+p
+```
+
+
+## Part 2
+
+Create a similar plot as in part 1, but for the `gdp.lifeExp` dataset. Use clustering to divide the countries into groups which had similar changes to life expectancy and GDP over time. For each cluster, comment on how life expectancy and GDP is changing over time.
+
+```{r}
+#data prep and wrangle
+#stack variables
+gdp.melt <- reshape2::melt(gdp.lifeExp, id.vars = c('country', 'year'), measure.vars = c('lifeExp', 'gdp.per.capita'))
+#combine year and variable
+gdp.melt2 <- mutate(gdp.melt, life.exp.GDP = interaction(year, variable))
+#
+gdpmelt2Sub<- subset(gdp.melt2, select = c('country', 'life.exp.GDP', 'value'))
+#
+gdp.spread <- tidyr::spread(gdpmelt2Sub, key = life.exp.GDP, value = value)
+gdp.spread <- gdp.spread %>%
+  na.omit()
+```
+
+```{r, fig.width = 10, warning = FALSE}
+#clusters
+clust.gdp <- Mclust(gdp.spread[ ,c(2:25)], G = 4)
+gdp.spread <- gdp.spread %>%
+  mutate(cluster = clust.gdp$classification)
+
+#extract cluster column
+gdp.spread2 <- gdp.spread[,c('country','cluster')]
+
+#add three year group breakout
+new.gdplifeExp <- gdp.lifeExp
+new.gdplifeExp$lifeExp.cat<- cut_number(gdp.lifeExp$lifeExp, n = 4)
+new.gdplifeExp$gdp.cat<- cut_number(gdp.lifeExp$gdp.per.capita, n = 3, labels = c('low', 'medium', 'high'))
+new.gdplifeExp$year.cat<- cut_number(gdp.lifeExp$year, n = 4, labels = c('1950-1975', '1976-2000', '2001-2025', '2026-2050'))
+
+new.gdplifeExp$year.catW<- cut_number(gdp.lifeExp$year, n = 6)
+  
+
+#merge cluster column to original dataframe
+gdp.full <- merge(new.gdplifeExp, gdp.spread2, "country") 
+
+#graph 1 - this is the first representation of the data, shown in scatterplots faceted on a grouping I created around age, and also by the clusters 
+plot.1 <- ggplot(data=gdp.full, mapping=aes(x=gdp.per.capita, y=lifeExp, group = country, color = continent)) + geom_point(data = new.gdplifeExp, color='grey', size=1) + geom_point() + facet_grid(cluster~year.cat) + labs(x = 'GDP $000s', y = 'Life Expectancy (years)', title = 'GDP and Life Expectancy over time') + xlim(0, 50000) + theme(axis.text.x = element_text(angle = 30, vjust =1, hjust = 1), plot.title = element_text(hjust=0.5, size = 25))
+
+plot.1
+
+#graph 2 - this is the second representation of the data, shown in lines faceted on a grouping I created around GDP group, and also by the clusters 
+plot.2 <- ggplot(data=gdp.full, mapping=aes(x=year, y=lifeExp, group = country, color = continent)) + geom_line(data = new.gdplifeExp, color='grey', size=1) + geom_line() + facet_grid(cluster~gdp.cat) + labs(x = 'Year', y = 'Life Expectancy', title = 'Life Expectancy by GDP Group over time') + theme(axis.text.x = element_text(angle = 30, vjust =1, hjust = 1), plot.title = element_text(hjust=0.5, size =  25))
+
+plot.2
+```
+
+**For the overwhelming majority of countries, GDP and Life Expectancy is increasing over time. It is clear from our visuals that Asian countries in particular are leading the way in terms of current pace and future prediction for both the fastest and highest magnitde of change.**
+
+## Part 3
+
+The plot format that we used in parts 1 and 2 has some advantages in letting you see the trajectory of each country over time, but also has some disadvantages.
+
+Comment on these disadvantages, and then use the data frame `gdp.lifeExp.small` to make a few plots (probably 1-3) to answer the following: how did each country evolve over time, in terms of life expectancy and per capita gdp? Your plots should let me identify both overall patterns followed by many countries, as well as individual countries which went against the overall pattern.
+
+This dataset only contains the first and last year for each country (1952 and 2007), so you should make plots that are different from parts 1 and 2. 
+
+* In part 3, you should make between 1 and 3 plots (not counting facets), with an absolute maximum of 5. (More plots is not necessarily better) Comment on what they show. Here are some things worth trying:
+    + Experiment with labels so that you can identify each country in the plot. But you'll need to be careful to make as many of the labels as legible as possible.
+    + Experiment with adding a reference line, and see if it highlights something interesting in the data (and if so, explain what)
+ 
+**graph1** Below we see how certain countries have improved or stayed stagnant over the past 65 years in terms of life expectancy and GDP. The graph captures life expectancy and GDP increasing as we move up and to the right. I have plotted a reference country in black that shows the avg of all of the countries over this time period.
+```{r}
+#data prep and wrangle
+small.melt <- reshape2::melt(gdp.lifeExp.small, id.vars = c('country', 'year', 'continent'), measure.vars = c('lifeExp', 'gdp.per.capita', 'continent'))
+small.melt2 <- mutate(small.melt, life.exp.GDP = interaction(year, variable))
+
+smallmelt2Sub<- subset(small.melt2, select = c('country', 'life.exp.GDP', 'value', 'continent'))
+small.spread <- tidyr::spread(smallmelt2Sub, key = life.exp.GDP, value = value)
+small.spread <- small.spread %>%
+  na.omit()
+small.spread.sub <- subset(small.spread, select = c(1:6))
+
+# Transform and relabel gender and race variables
+colnames(small.spread.sub) <- c('country', 'continent', 'life.exp1952', 'life.exp2007', 'gdp.per.capita1952', 'gdp.per.capita2007')
+small.spread.sub <- transform(small.spread.sub, life.exp1952 = as.numeric(life.exp1952), life.exp2007 = as.numeric(life.exp2007), gdp.per.capita1952 = as.numeric(gdp.per.capita1952), gdp.per.capita2007 = as.numeric(gdp.per.capita2007))
+
+#add change columns
+small.spread.change <- small.spread.sub %>%
+  mutate(lifeExp.change = abs((`life.exp1952`-`life.exp2007`)/`life.exp1952`), gdp.change = abs((`gdp.per.capita1952`-`gdp.per.capita2007`)/`gdp.per.capita1952`))
+
+sub.small <- small.spread.change[,c(1,2,7,8)]
+
+#create data frame for reference country
+sub.small.explore <- sub.small %>%
+  mutate(avg.gdp = mean(gdp.change), avg.life = mean(lifeExp.change))
+sub.small.explore2 <- sub.small.explore[,c(1,2,5,6)]
+colnames(sub.small.explore2) <- c('country','continent', 'gdp.change', 'lifeExp.change')
+
+#plot including average country
+ggplot(data=sub.small, mapping=aes(x=gdp.change, y=lifeExp.change, label = country, color=continent)) + geom_point(data = sub.small.explore2, color='black', size=10) + geom_point()  + geom_text(check_overlap = T) + labs(title = 'Life Expectancy & GDP change from 1952-2007') + annotate('text', x=6, y=.48, label = 'Avg Country', color = 'black', size = 6 ) + theme(plot.title = element_text(hjust=0.5))
+```
+
+
+**graph2** Here we see a breakout of contintent and how in particular how each one is moving from a pace perspective relative to other continents.
+```{r, fig.width = 12, warning = FALSE}
+#dot plot continents faceted
+dot.plot.facet <- ggplot(data=gdp.lifeExp.small, mapping=aes(x=gdp.per.capita, y=lifeExp, color = continent, label = country)) + geom_point() + facet_grid(continent~year) + labs(x = 'GDP $000s', y = 'Life Expectancy (years)', title = 'Time') + xlim(0, 50000) + theme(axis.text.x = element_text(angle = 30, vjust =1, hjust = 1), plot.title = element_text(hjust=0.5)) + scale_size_area(max_size = 15) + geom_text(data=subset(gdp.lifeExp.small, gdp.per.capita > 30000 | lifeExp >70 | gdp.per.capita <50000 | lifeExp < 40), check_overlap = T) 
+
+#plot
+dot.plot.facet
+```
+
+**graph3** A visual representation of all countries Life Expectancy change over time.
+```{r, fig.width = 18, warning = FALSE}
+#data prep
+summary.small <- transform(small.spread.change, country = reorder(country, lifeExp.change))
+# Construct ggplot object, will fill color determined by continent
+intercept.fig <- ggplot(data = summary.small, mapping = aes(x = country, y = lifeExp.change, fill = continent))
+# Construct bar chart
+intercept.fig + geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 80, vjust = 1, hjust = 1, size = 20), plot.title = element_text(hjust=0.5, size = 55)) + labs(title = 'Life Expectancy Change over time')
+```
+
+**graph4** A visual representation of all countries GDP change over time.
+```{r, fig.width = 18, warning = FALSE}
+summary.small2 <- transform(small.spread.change, country = reorder(country, gdp.change))
+# Construct ggplot object, will fill color determined by continent
+intercept.fig2 <- ggplot(data = summary.small2, mapping = aes(x = country, y = gdp.change, fill = continent))
+# Construct bar chart
+intercept.fig2 + geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1, size = 20), plot.title = element_text(hjust=0.5, size =  55))+ labs(title = 'GDP change over time', size = 45)  
+
+
+```
+
+**The Asian nations are continuing to get richer while increasing their life expectancies. While African countries are doing well to increase their life expectancies, they are not getting rich like the Asian countries, except for a few resource rich nations. 
+
